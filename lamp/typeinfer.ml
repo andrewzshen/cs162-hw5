@@ -142,34 +142,135 @@ module Infer = struct
   (** Generate a fresh [ty] type variable. Call it using [fresh_var ()]. *)
   let fresh_var () : ty = TVar (fresh_var_str ())
 
-  (*******************************************
-   *         Constraint Generation           *
-   *******************************************)
+    (*******************************************
+    *         Constraint Generation           *
+    *******************************************)
 
-  (** Abstractly evaluate an expression to a type.
+    (** Abstractly evaluate an expression to a type.
     * This function also generates constraints and accumulates them into 
     * the list [cs] whenever you call [t1 === t2]. *)
-  let rec abstract_eval (gamma : gamma) (e : expr) : ty =
+    let rec abstract_eval (gamma : gamma) (e : expr) : ty =
     (* The following line loads functions in Ast.Ty module, allowing you to write
        [int] for [TInt], [bool] for [TBool], [t1 => t2] for [TFun(t1, t2)],
        [list t] for TList(t), and [t1 * t2] for [TProd(t1, t2)].
        However, you don't have to use the Ast.Ty functions, and you can just
        call the appropriate [ty] constructors. *)
-    let open Ty in
-    (* If you prefer the "printf" school of debugging, uncomment the following line,
-       BUT DON'T FORGET TO COMMENT IT OUT BEFORE YOU SUBMIT *)
-    (* Fmt.epr "[abstract_eval] %a\n%!" Ast.Pretty.expr e; *)
-    (* Fmt.epr "[abstract_eval] Gamma:\n%!  %a\n%!" pp_gamma gamma; *)
-    try match e with Num _ -> TInt | True | False -> TBool | _ -> todo ()
-    with Type_error msg ->
-      ty_err (msg ^ Fmt.(str "\nin expression %a" Pretty.expr e))
+        let open Ty in
+        (* If you prefer the "printf" school of debugging, uncomment the following line,
+        BUT DON'T FORGET TO COMMENT IT OUT BEFORE YOU SUBMIT *)
+        (* Fmt.epr "[abstract_eval] %a\n%!" Ast.Pretty.expr e; *)
+        (* Fmt.epr "[abstract_eval] Gamma:\n%!  %a\n%!" pp_gamma gamma; *)
+        try 
+            match e with Num _ -> TInt | True | False -> TBool 
+            | Binop (_, lhs, rhs) -> 
+                let lhs_ty = abstract_eval gamma lhs in
+                let rhs_ty = abstract_eval gamma rhs in
+                lhs_ty === TInt;
+                rhs_ty === TInt;
+                TInt
+            | Var x -> 
+                (match find gamma x with
+                | Some t -> t
+                | None -> ty_err ("Unbound variable " ^ x))
+            | Lambda (param_t, (param, body)) ->
+                let param_t' = 
+                    (match param_t with
+                    | Some t -> t 
+                    | None -> fresh_var ())
+                in
+                let body_t = abstract_eval ((param, param_t')::gamma) body in 
+                TFun (param_t', body_t)
+            | App (fn, arg) ->
+                let fn_t = abstract_eval gamma fn in
+                let arg_t = abstract_eval gamma arg in
+                let ret_t = fresh_var () in
+                fn_t === TFun (arg_t, ret_t);
+                fn_t
+            | Let (value, (name, body)) -> 
+                let value_t = abstract_eval gamma value in
+                let env' = add env name value_t in
+                abstract_eval env' body
+            | IfThenElse (cond, tt, ff) -> 
+                let cond_ty = abstract_eval env cond in
+                if not (equal_ty cond_ty TBool) then ty_err "Condition must be bool type" else
+                let tt_t = abstract_eval env tt in
+                let ff_t = abstract_eval env ff in 
+                if equal_ty tt_t ff_t
+                then tt_t
+                else ty_err "Branches must have same type"
+            | Comp (_, lhs, rhs) -> 
+                let lhs_t = abstract_eval env lhs in
+                let rhs_t = abstract_eval env rhs in
+                if equal_ty lhs_t TInt && equal_ty rhs_t TInt 
+                then TBool
+                else ty_err "Comp expects int operands"
+            | ListNil elem_t ->
+                (match elem_t with
+                | Some elem_t' -> TList elem_t'
+                | None -> ty_err "ListNil requires type annotation")
+            | ListCons (head, tail) -> 
+                let head_t = abstract_eval env head in
+                let tail_t = abstract_eval env tail in
+                (match tail_t with
+                | TList elem_t ->
+                    if equal_ty head_t elem_t
+                    then TList elem_t
+                    else ty_err "Head type mismatch in list"
+                | _ -> ty_err "Tail must be list")
+            | ListMatch (scrutinee, nil_case, (h, (t, cons_case))) -> 
+                (match abstract_eval env scrutinee with
+                | TList elem_t ->
+                    let nil_t = abstract_eval env nil_case in
+                    let env' = add env h elem_t in
+                    let env'' = add env' t (TList elem_t) in
+                    let cons_ty = abstract_eval env'' cons_case in
+                    if equal_ty nil_t cons_ty
+                    then nil_t
+                    else ty_err "ListMatch branches must have same type"
+                | _ -> ty_err "ListMatch expects a list")
+            | Fix (expected_t, (self, body)) ->
+                (match expected_t with
+                | Some expected_t' -> 
+                    let env' = add env self expected_t' in
+                    let body_t = abstract_eval env' body in
+                    if equal_ty body_t expected_t'
+                    then expected_t'
+                    else ty_err "Fix body does not match annotation"
+                | None -> ty_err "Fix requires type annotation")
+            | Annot (body, expected_t) -> 
+                let expected_t' = abstract_eval env body in
+                if equal_ty expected_t expected_t'
+                then expected_t
+                else ty_err "Type annotation does not match actual type"
+            | Unit -> TUnit
+            | Both (e1, e2) -> 
+                let t1 = abstract_eval env e1 in
+                let t2 = abstract_eval env e2 in
+                TProd (t1, t2)
+            | I1 e1 ->
+                (match abstract_eval env e1 with
+                | TProd (t1, _) -> t1 
+                | _ -> ty_err  "Expected prod type")
+            | I2 e2 -> 
+                (match abstract_eval env e2 with
+                | TProd (_, t2) -> t2 
+                | _ -> ty_err  "Expected prod type")
+            (* void *)
+            | Absurd _ -> TVoid
+            (* external choice *)
+            | E1 e1 -> failwith "TODO"
+            | E2 e2 -> failwith "TODO" 
+            | Either (e, b1, b2) -> failwith "TODO" 
+            | _ -> todo ()
+        with Type_error msg ->
+            ty_err (msg ^ Fmt.(str "\nin expression %a" Pretty.expr e))
 
-  (*******************************************
-   *           Constraint Solving            *
-   *******************************************)
+    (*******************************************
+    *           Constraint Solving            *
+    *******************************************)
 
-  (** unification algorithm *)
-  and unify (cs : cons list) : soln =
+    (** unification algorithm *)
+    and unify (cs : cons list) : soln =
     match cs with
     | [] ->
         (* empty solution *)
