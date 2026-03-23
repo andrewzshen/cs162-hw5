@@ -162,8 +162,6 @@ let rec size (t : ty) : int option =
             in
             Some (pow s2 s1)
         | _ -> None)
-    | TUnit -> Some 1 
-    | TVoid -> Some 0 
     | TProd (t1, t2) -> 
         (match size t1, size t2 with
         | Some 0, _ | _, Some 0 -> Some 0
@@ -173,3 +171,5 @@ let rec size (t : ty) : int option =
         (match size t1, size t2 with
         | Some s1, Some s2 -> Some (s1 + s2)
         | _ -> None)
+    | TUnit -> Some 1 
+    | TVoid -> Some 0 

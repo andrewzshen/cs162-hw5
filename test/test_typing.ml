@@ -71,12 +71,22 @@ let check_ill_typed_s ~gamma (e_str : string) () =
   check_ill_typed ~gamma (parse e_str) ()
 
 let well_typed_tests =
-  let t = check_well_typed_s ~gamma:[] in
-  [
-    check_well_typed_s (* typing environment *)
-      ~gamma:[] (* input expression *) "0" (* expected inferred type *) "Int";
-    t "lambda x. x" "'a -> 'a";
-  ]
+    let t = check_well_typed_s ~gamma:[] in
+    [
+        check_well_typed_s (* typing environment *)
+        ~gamma:[] (* input expression *) "0" (* expected inferred type *) "Int";
+        t "1 + 2" "Int";
+        t "lambda x. x" "'a -> 'a";
+        t "true" "Bool";
+        t "lambda x. 1" "'a -> Int";
+        t "(lambda x. x) 5" "Int";
+        t "lambda x. lambda y. x" "'a -> 'b -> 'a";
+        t "if true then 1 else 2" "Int";
+        t "let x = 1 in x + 2" "Int";
+        t "Nil" "List['a]";
+        t "1 :: Nil" "List[Int]"; 
+        t "match Nil with Nil -> 0 | h::t -> h end" "Int";
+    ]
 
 let ill_typed_tests = [ check_ill_typed_s ~gamma:[] "true+1" ]
 let tests = [ ("well_typed", well_typed_tests); ("ill_typed", ill_typed_tests) ]
